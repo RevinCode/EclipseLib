@@ -2,20 +2,41 @@ local EclipseLib = {}
 EclipseLib.__index = EclipseLib
 EclipseLib.Version = "1.0.0"
 
+if not game then
+    warn("EclipseLib: 'game' is not available")
+    return EclipseLib
+end
+
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
-local CoreGui
-pcall(function()
-    CoreGui = game:GetService("CoreGui")
-end)
-if not CoreGui then
-    CoreGui = gethui and gethui() or Players.LocalPlayer:WaitForChild("PlayerGui")
+
+local Player = Players.LocalPlayer
+local Mouse = Player:GetMouse()
+
+local function GetParent()
+    local success, result = pcall(function()
+        if gethui then
+            return gethui()
+        elseif syn and syn.protect_gui then
+            local gui = Instance.new("ScreenGui")
+            syn.protect_gui(gui)
+            gui.Parent = game:GetService("CoreGui")
+            return gui.Parent
+        else
+            return game:GetService("CoreGui")
+        end
+    end)
+    
+    if success and result then
+        return result
+    else
+        return Player:WaitForChild("PlayerGui")
+    end
 end
 
-local Player = Players.LocalPlayer or Players:WaitForChild("LocalPlayer", 10)
-local Mouse = Player and Player:GetMouse()
+local GuiParent = GetParent()
 
 local Themes = {
     Eclipse = {
@@ -155,7 +176,7 @@ function EclipseLib:CreateWindow(config)
     
     local ScreenGui = CreateElement("ScreenGui", {
         Name = "EclipseLibUI",
-        Parent = CoreGui,
+        Parent = GuiParent,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         ResetOnSpawn = false
     })
@@ -2101,11 +2122,23 @@ function EclipseLib:CreateWindow(config)
     function Window:SaveConfig(filename)
         filename = filename or "EclipseConfig"
         
-        local HttpService = game:GetService("HttpService")
-        local configData = HttpService:JSONEncode(Window.ConfigValues)
+        if not writefile then
+            Window:CreateNotification({
+                Title = "Save Failed",
+                Content = "Your executor doesn't support file operations",
+                Type = "Error",
+                Duration = 3
+            })
+            return false
+        end
         
-        if writefile then
+        local success, err = pcall(function()
+            local HttpService = game:GetService("HttpService")
+            local configData = HttpService:JSONEncode(Window.ConfigValues)
             writefile(filename .. ".json", configData)
+        end)
+        
+        if success then
             Window:CreateNotification({
                 Title = "Config Saved",
                 Content = "Configuration saved to " .. filename .. ".json",
@@ -2116,7 +2149,7 @@ function EclipseLib:CreateWindow(config)
         else
             Window:CreateNotification({
                 Title = "Save Failed",
-                Content = "writefile function not available",
+                Content = "Error saving config",
                 Type = "Error",
                 Duration = 3
             })
@@ -2127,35 +2160,45 @@ function EclipseLib:CreateWindow(config)
     function Window:LoadConfig(filename)
         filename = filename or "EclipseConfig"
         
-        if readfile and isfile and isfile(filename .. ".json") then
-            local HttpService = game:GetService("HttpService")
-            local success, data = pcall(function()
-                return HttpService:JSONDecode(readfile(filename .. ".json"))
-            end)
-            
-            if success and data then
-                Window.ConfigValues = data
-                Window:CreateNotification({
-                    Title = "Config Loaded",
-                    Content = "Configuration loaded from " .. filename .. ".json",
-                    Type = "Success",
-                    Duration = 2
-                })
-                return true
-            else
-                Window:CreateNotification({
-                    Title = "Load Failed",
-                    Content = "Failed to parse configuration file",
-                    Type = "Error",
-                    Duration = 3
-                })
-                return false
-            end
-        else
+        if not readfile or not isfile then
+            Window:CreateNotification({
+                Title = "Load Failed",
+                Content = "Your executor doesn't support file operations",
+                Type = "Error",
+                Duration = 3
+            })
+            return false
+        end
+        
+        if not isfile(filename .. ".json") then
             Window:CreateNotification({
                 Title = "Load Failed",
                 Content = "Configuration file not found",
                 Type = "Warning",
+                Duration = 3
+            })
+            return false
+        end
+        
+        local success, data = pcall(function()
+            local HttpService = game:GetService("HttpService")
+            return HttpService:JSONDecode(readfile(filename .. ".json"))
+        end)
+        
+        if success and data then
+            Window.ConfigValues = data
+            Window:CreateNotification({
+                Title = "Config Loaded",
+                Content = "Configuration loaded from " .. filename .. ".json",
+                Type = "Success",
+                Duration = 2
+            })
+            return true
+        else
+            Window:CreateNotification({
+                Title = "Load Failed",
+                Content = "Failed to parse configuration file",
+                Type = "Error",
                 Duration = 3
             })
             return false
@@ -2165,7 +2208,17 @@ function EclipseLib:CreateWindow(config)
     function Window:DeleteConfig(filename)
         filename = filename or "EclipseConfig"
         
-        if delfile and isfile and isfile(filename .. ".json") then
+        if not delfile or not isfile then
+            Window:CreateNotification({
+                Title = "Delete Failed",
+                Content = "Your executor doesn't support file operations",
+                Type = "Error",
+                Duration = 3
+            })
+            return false
+        end
+        
+        if isfile(filename .. ".json") then
             delfile(filename .. ".json")
             Window:CreateNotification({
                 Title = "Config Deleted",
@@ -2177,7 +2230,7 @@ function EclipseLib:CreateWindow(config)
         else
             Window:CreateNotification({
                 Title = "Delete Failed",
-                Content = "File not found or delfile unavailable",
+                Content = "File not found",
                 Type = "Error",
                 Duration = 3
             })
@@ -2186,17 +2239,25 @@ function EclipseLib:CreateWindow(config)
     end
     
     function Window:ListConfigs()
-        if listfiles then
-            local files = listfiles()
-            local configs = {}
-            for _, file in ipairs(files) do
-                if file:sub(-5) == ".json" then
-                    table.insert(configs, file)
-                end
-            end
-            return configs
+        if not listfiles then
+            return {}
         end
-        return {}
+        
+        local success, files = pcall(function()
+            return listfiles()
+        end)
+        
+        if not success then
+            return {}
+        end
+        
+        local configs = {}
+        for _, file in ipairs(files) do
+            if file:sub(-5) == ".json" then
+                table.insert(configs, file)
+            end
+        end
+        return configs
     end
     
     function Window:SetValue(key, value)
@@ -2299,7 +2360,7 @@ end
 function EclipseLib:Notify(config)
     local TempGui = CreateElement("ScreenGui", {
         Name = "EclipseNotif",
-        Parent = CoreGui,
+        Parent = GuiParent,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     })
     
@@ -2863,7 +2924,7 @@ function EclipseLib:CreateDialog(config)
     
     local DialogGui = CreateElement("ScreenGui", {
         Name = "EclipseDialog",
-        Parent = CoreGui,
+        Parent = GuiParent,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     })
     
@@ -3024,7 +3085,7 @@ function EclipseLib:CreateContextMenu(options, position)
     
     local ContextGui = CreateElement("ScreenGui", {
         Name = "EclipseContext",
-        Parent = CoreGui,
+        Parent = GuiParent,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     })
     
@@ -3134,7 +3195,7 @@ end
 function EclipseLib:Prompt(title, content, callback)
     local PromptGui = CreateElement("ScreenGui", {
         Name = "EclipsePrompt",
-        Parent = CoreGui,
+        Parent = GuiParent,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     })
     
